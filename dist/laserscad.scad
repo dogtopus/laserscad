@@ -39,6 +39,8 @@ _laserscad_var_sanity_check(_lkerf_undef, "lkerf", _lkerf_default);
 _laserscad_var_sanity_check(_lmargin_undef, "lmargin", _lmargin_default);
 _laserscad_var_sanity_check(_lidentify_undef, "lidentify", _lidentify_default);
 
+function _laserscad_kv_query(kv, key) = kv[search([key], kv, 1, 0)[0]][1];
+
 module _laserscad_var_sanity_check(undefined, name, default) {
     if (undefined && _laserscad_mode <= 1) {
         echo(str("Variable \"", name, "\" was not specified. Using default value ", default, "."));
@@ -156,7 +158,35 @@ module lpart(id, dims) {
 }
 
 // overwritten once optimal translations are known after packing
-function _lpart_translation(id) = [0,0,0];
+// [[id, [x, y, z], [xrot, yrot, zrot]], ...]
+_lpart_translation_table = [];
+// [[id, pageno], ...]
+_lpart_visibility_table = [];
+_lpart_current_page = 0;
+_lpart_total_pages = 1;
+_lpart_page_dim = [0, 0];
+
+// Move/rotate lparts according to the packing result
+module _lpart_translation(id, odim, compensate=[0, 0, 0]) {
+    _val = _laserscad_kv_query(_lpart_translation_table, id);
+    _val_actual = _val != undef ? _val : [[0, 0, 0], [0, 0, 0]];
+    rot_offset = [(_val_actual[1].z == 90 ? odim.y : 0), 0, 0];
+    translate(_val_actual[0]+compensate+rot_offset)
+        rotate(_val_actual[1]) children();
+}
+
+// Control visibility of lparts when in rendering mode and place lparts to their own page when in preview mode
+module _lpart_visibility(page, id, is_preview) {
+    _val = _laserscad_kv_query(_lpart_visibility_table, id);
+    if (is_preview) {
+        // TODO tiled placement?
+        translate([(_lpart_page_dim.x + 10) * _val, 0, 0]) children();
+    } else {
+        if (_val == undef || _val == page) {
+            children();
+        }
+    }
+}
 
 // actual lpart after sanity checks
 module _lpart_sane(id, dims) {
@@ -170,7 +200,7 @@ module _lpart_sane(id, dims) {
             echo(str("[laserscad] ##",id,",",ext_dims[0],",",ext_dims[1],"##"));
         } else {
             // preview, engrave, cut phases: 2D translations apply
-            translate(_lpart_translation(id) + (lkerf + lmargin)*[1,1,0]) {
+            _lpart_visibility(_lpart_current_page, id, _laserscad_mode == 2) _lpart_translation(id, dims, (lkerf + lmargin)*[1,1,0]) {
                 if (_laserscad_mode == 3) {
                     // engrave phase: move non-engraving children out of the way (see explanation at _lengrave_translation_z_helper above)
                     projection(cut=false)
